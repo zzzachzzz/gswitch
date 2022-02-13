@@ -178,6 +178,7 @@ switch_to_host_gpu() {
 }
 
 bind_guest_gpu_vfio_pci() {
+  ####### Assume vtconsole & efi-framebuffer are already unbound TODO
   # Unbind VTconsoles
   echo 0 > /sys/class/vtconsole/vtcon0/bind
   echo 0 > /sys/class/vtconsole/vtcon1/bind
@@ -185,12 +186,9 @@ bind_guest_gpu_vfio_pci() {
   # Unbind EFI-Framebuffer
   echo "efi-framebuffer.0" > /sys/bus/platform/drivers/efi-framebuffer/unbind
 
-  # Avoid race condition
-  sleep 4
-
-  ### DRIVER BINDINGS
   local gpu_video_id="0000:$GUEST_GPU_VIDEO_BUS_ID"
   local gpu_audio_id="0000:$GUEST_GPU_AUDIO_BUS_ID"
+
   # GPU 1 unbind from nvidia
   echo "$gpu_video_id" > "/sys/bus/pci/devices/$gpu_video_id/driver/unbind"
   echo "$gpu_audio_id" > "/sys/bus/pci/devices/$gpu_audio_id/driver/unbind"
@@ -203,6 +201,15 @@ bind_guest_gpu_vfio_pci() {
   # GPU 1 bind to vfio-pci
   echo "$gpu_video_id" > /sys/bus/pci/drivers/vfio-pci/bind
   echo "$gpu_audio_id" > /sys/bus/pci/drivers/vfio-pci/bind
+
+  # Rebind vtconsole & efi-framebuffer
+  # nvidia-xconfig --query-gpu-info > /dev/null 2>&1
+  echo "efi-framebuffer.0" > /sys/bus/platform/drivers/efi-framebuffer/bind
+
+  echo 1 > /sys/class/vtconsole/vtcon0/bind
+  echo 1 > /sys/class/vtconsole/vtcon1/bind
+
+  # nvidia-xconfig --query-gpu-info > /dev/null 2>&1 # TODO Maybe
 }
 
 bind_guest_gpu_driver() {
@@ -214,7 +221,7 @@ bind_guest_gpu_driver() {
   echo "efi-framebuffer.0" > /sys/bus/platform/drivers/efi-framebuffer/unbind
 
   # Avoid race condition
-  sleep 4
+  # sleep 4
 
   local gpu_video_id="0000:$GUEST_GPU_VIDEO_BUS_ID"
   local gpu_audio_id="0000:$GUEST_GPU_AUDIO_BUS_ID"
@@ -228,14 +235,14 @@ bind_guest_gpu_driver() {
   echo "$gpu_audio_id" > /sys/bus/pci/drivers/snd_hda_intel/bind
 
   # TODO Maybe?
-  # nvidia-xconfig --query-gpu-info > /dev/null 2>&1
+  nvidia-xconfig --query-gpu-info > /dev/null 2>&1
+  echo "efi-framebuffer.0" > /sys/bus/platform/drivers/efi-framebuffer/bind
 
   # Rebind VT consoles
-  # echo 1 > /sys/class/vtconsole/vtcon0/bind
-  # echo 1 > /sys/class/vtconsole/vtcon1/bind
+  echo 1 > /sys/class/vtconsole/vtcon0/bind
+  echo 1 > /sys/class/vtconsole/vtcon1/bind
 
   # nvidia-xconfig --query-gpu-info > /dev/null 2>&1
-  # echo "efi-framebuffer.0" > /sys/bus/platform/drivers/efi-framebuffer/bind
 
   # Unload vfio
   # modprobe -r vfio_pci
