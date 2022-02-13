@@ -20,7 +20,7 @@ fi
 XORG_HOST_GPU_CONF="${XORG_CONF_DIR}/99-gswitch-host.conf"
 XORG_GUEST_GPU_CONF="${XORG_CONF_DIR}/99-gswitch-guest.conf"
 
-source ./gswitch.conf
+source /usr/share/gswitch/gswitch.conf
 
 # Example: "0b:00.1" -> "11:0:1"
 hex_bus_id_to_dec_id() {
@@ -39,19 +39,30 @@ hex_bus_id_to_dec_id() {
 
 has_xorg_confs_setup() {
   [[
-    ((-f "${XORG_HOST_GPU_CONF}") || (-f "${XORG_HOST_GPU_CONF}.skip"))
-    && ((-f "${XORG_GUEST_GPU_CONF}") || (-f "${XORG_GUEST_GPU_CONF}.skip"))
+    ((-f "$XORG_HOST_GPU_CONF") || (-f "$XORG_HOST_GPU_CONF.skip"))
+    && ((-f "$XORG_GUEST_GPU_CONF") || (-f "$XORG_GUEST_GPU_CONF.skip"))
   ]]
   return
 }
 
 active_xorg_conf() {
-  if [ -f "${XORG_HOST_GPU_CONF}" ]; then
+  if [ -f "$XORG_HOST_GPU_CONF" ]; then
     echo "host"
-  elif [ -f "${XORG_GUEST_GPU_CONF}" ]; then
+  elif [ -f "$XORG_GUEST_GPU_CONF" ]; then
     echo "guest"
   else
     echo ""
+  fi
+}
+
+switch_xorg_conf() {
+  local target="$1" # "host" | "guest"
+  if [ "$target" == "host" ]; then
+    mv "${XORG_GUEST_GPU_CONF}" "${XORG_GUEST_GPU_CONF}.skip"
+    mv "${XORG_HOST_GPU_CONF}.skip" "${XORG_HOST_GPU_CONF}"
+  elif [ "$target" == "guest" ]; then
+    mv "${XORG_HOST_GPU_CONF}" "${XORG_HOST_GPU_CONF}.skip"
+    mv "${XORG_GUEST_GPU_CONF}.skip" "${XORG_GUEST_GPU_CONF}"
   fi
 }
 
@@ -74,7 +85,7 @@ ask_reload() {
 }
 
 do_reload() {
-  local target_gpu = $1 # "host" | "guest"
+  local target_gpu="$1" # "host" | "guest"
   ( trap '' HUP TERM
     while [ "$(systemctl status display-manager | awk '/Active:/{print$2}')" \
                = "active" ]; do
@@ -89,7 +100,7 @@ do_reload() {
         fi
       done
     fi
-    if [ "${target_gpu}" = "guest" ]; then
+    if [ "${target_gpu}" == "guest" ]; then
       bind_guest_gpu_driver
     else
       bind_guest_gpu_vfio_pci
@@ -127,18 +138,17 @@ switch_to_guest_gpu() {
       exit 0
     fi
   fi
-  if has_xorg_confs_setup; then
-    ask_reload "You are already set up. Would you like to reload? (Y/n)"
+  if [ "$(active_xorg_conf)" != "guest" ]; then
+    switch_xorg_conf "guest"
+
+    ask_reload "You are now set up. Would you like to reload? (Y/n)"
     if [ "${RELOAD}" = "true" ]; then
       do_reload "guest"
     else
       exit 0
     fi
   else
-    mv "${XORG_HOST_GPU_CONF}" "${XORG_HOST_GPU_CONF}.skip"
-    mv "${XORG_GUEST_GPU_CONF}.skip" "${XORG_GUEST_GPU_CONF}.skip"
-
-    ask_reload "You are now set up. Would you like to reload? (Y/n)"
+    ask_reload "You are already set up. Would you like to reload? (Y/n)"
     if [ "${RELOAD}" = "true" ]; then
       do_reload "guest"
     else
@@ -149,8 +159,8 @@ switch_to_guest_gpu() {
 
 switch_to_host_gpu() {
   if [ "$(active_xorg_conf)" != "host" ]; then
-    mv "${XORG_HOST_GPU_CONF}.skip" "${XORG_HOST_GPU_CONF}"
-    mv "${XORG_GUEST_GPU_CONF}" "${XORG_GUEST_GPU_CONF}.skip"
+    switch_xorg_conf "host"
+
     ask_reload "You are now set up. Would you like to reload? (Y/n)"
     if [ "${RELOAD}" = "true" ]; then
       do_reload "host"
@@ -179,9 +189,11 @@ bind_guest_gpu_vfio_pci() {
   sleep 4
 
   ### DRIVER BINDINGS
+  local gpu_video_id="0000:$GUEST_GPU_VIDEO_BUS_ID"
+  local gpu_audio_id="0000:$GUEST_GPU_AUDIO_BUS_ID"
   # GPU 1 unbind from nvidia
-  echo "$GUEST_GPU_VIDEO_BUS_ID" > /sys/bus/pci/devices/$GUEST_GPU_VIDEO_BUS_ID/driver/unbind
-  echo "$GUEST_GPU_AUDIO_BUS_ID" > /sys/bus/pci/devices/$GUEST_GPU_AUDIO_BUS_ID/driver/unbind
+  echo "$gpu_video_id" > "/sys/bus/pci/devices/$gpu_video_id/driver/unbind"
+  echo "$gpu_audio_id" > "/sys/bus/pci/devices/$gpu_audio_id/driver/unbind"
 
   # Load VFIO Kernel Module
   modprobe vfio
@@ -189,8 +201,8 @@ bind_guest_gpu_vfio_pci() {
   modprobe vfio_pci
 
   # GPU 1 bind to vfio-pci
-  echo "$GUEST_GPU_VIDEO_BUS_ID" > /sys/bus/pci/drivers/vfio-pci/bind
-  echo "$GUEST_GPU_AUDIO_BUS_ID" > /sys/bus/pci/drivers/vfio-pci/bind
+  echo "$gpu_video_id" > /sys/bus/pci/drivers/vfio-pci/bind
+  echo "$gpu_audio_id" > /sys/bus/pci/drivers/vfio-pci/bind
 }
 
 bind_guest_gpu_driver() {
@@ -204,13 +216,16 @@ bind_guest_gpu_driver() {
   # Avoid race condition
   sleep 4
 
+  local gpu_video_id="0000:$GUEST_GPU_VIDEO_BUS_ID"
+  local gpu_audio_id="0000:$GUEST_GPU_AUDIO_BUS_ID"
+
   # GPU 1 unbind from vfio-pci
-  echo "$GUEST_GPU_VIDEO_BUS_ID" > /sys/bus/pci/devices/$GUEST_GPU_VIDEO_BUS_ID/driver/unbind
-  echo "$GUEST_GPU_AUDIO_BUS_ID" > /sys/bus/pci/devices/$GUEST_GPU_AUDIO_BUS_ID/driver/unbind
+  echo "$gpu_video_id" > "/sys/bus/pci/devices/$gpu_video_id/driver/unbind"
+  echo "$gpu_audio_id" > "/sys/bus/pci/devices/$gpu_audio_id/driver/unbind"
 
   # GPU 1 bind to nvidia
-  echo "$GUEST_GPU_VIDEO_BUS_ID" > /sys/bus/pci/drivers/nvidia/bind
-  echo "$GUEST_GPU_AUDIO_BUS_ID" > /sys/bus/pci/drivers/snd_hda_intel/bind
+  echo "$gpu_video_id" > /sys/bus/pci/drivers/nvidia/bind
+  echo "$gpu_audio_id" > /sys/bus/pci/drivers/snd_hda_intel/bind
 
   # TODO Maybe?
   # nvidia-xconfig --query-gpu-info > /dev/null 2>&1
